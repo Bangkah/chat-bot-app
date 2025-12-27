@@ -9,6 +9,8 @@ import (
 	"time"
 	"math/rand"
 	"fmt"
+	"os/exec"
+	"encoding/json"
 )
 
 type ChatMessage struct {
@@ -29,27 +31,7 @@ var (
 	)
 
 func init() {
-	// Data dummy: dua sesi dengan riwayat chat berbeda
-	sessions["session-1"] = &ChatSession{
-		ID:   "session-1",
-		Name: "Tanya AI",
-		Messages: []ChatMessage{
-			{Sender: "user", Message: "Hai, siapa namamu?", Timestamp: time.Now().Add(-10 * time.Minute)},
-			{Sender: "bot", Message: "Saya adalah bot AI Ollama.", Timestamp: time.Now().Add(-9 * time.Minute)},
-			{Sender: "user", Message: "Apa yang bisa kamu lakukan?", Timestamp: time.Now().Add(-8 * time.Minute)},
-			{Sender: "bot", Message: "Saya bisa menjawab pertanyaan dan membantu Anda.", Timestamp: time.Now().Add(-7 * time.Minute)},
-		},
-	}
-	sessions["session-2"] = &ChatSession{
-		ID:   "session-2",
-		Name: "Belajar Flutter",
-		Messages: []ChatMessage{
-			{Sender: "user", Message: "Bagaimana cara membuat aplikasi Flutter?", Timestamp: time.Now().Add(-6 * time.Minute)},
-			{Sender: "bot", Message: "Anda bisa mulai dengan flutter create nama_app.", Timestamp: time.Now().Add(-5 * time.Minute)},
-			{Sender: "user", Message: "Bagaimana menampilkan daftar chat?", Timestamp: time.Now().Add(-4 * time.Minute)},
-			{Sender: "bot", Message: "Gunakan ListView.builder untuk menampilkan daftar chat di Flutter.", Timestamp: time.Now().Add(-3 * time.Minute)},
-		},
-	}
+	       // Tidak ada data dummy, sesi hanya dibuat lewat endpoint
 }
 
 // Endpoint & Route Documentation:
@@ -155,30 +137,47 @@ func main() {
 }
 
 func sendToOllama(message string) (string, error) {
-	       ollamaURL := "http://localhost:11434/api/chat"
-	       jsonStr := []byte(fmt.Sprintf(`{"model": "llama2", "message": "%s"}`, message))
-	       resp, err := http.Post(ollamaURL, "application/json", bytes.NewBuffer(jsonStr))
-	       if err != nil {
-		       return "", err
-	       }
-	       defer resp.Body.Close()
-	       body, err := ioutil.ReadAll(resp.Body)
-	       if err != nil {
-		       return "", err
-	       }
-	       // Parse JSON response from Ollama
-	       var result map[string]interface{}
-	       if err := json.Unmarshal(body, &result); err != nil {
+		       // Detect available model from 'ollama list'
+		       model := ""
+			       cmd := exec.Command("ollama", "list")
+			       out, err := cmd.Output()
+			       if err == nil {
+				       lines := bytes.Split(out, []byte{'\n'})
+				       for _, line := range lines {
+					       fields := bytes.Fields(line)
+					       if len(fields) > 0 && string(fields[0]) != "NAME" {
+						       model = string(fields[0])
+						       break
+					       }
+				       }
+			       }
+		       if model == "" {
+			       return "Model Ollama tidak terdeteksi di perangkat.", nil
+		       }
+		       ollamaURL := "http://localhost:11434/api/chat"
+		       jsonStr := []byte(fmt.Sprintf(`{"model": "%s", "message": "%s"}`, model, message))
+		       resp, err := http.Post(ollamaURL, "application/json", bytes.NewBuffer(jsonStr))
+		       if err != nil {
+			       return "", err
+		       }
+		       defer resp.Body.Close()
+		       body, err := ioutil.ReadAll(resp.Body)
+		       if err != nil {
+			       return "", err
+		       }
+		       // Parse JSON response from Ollama
+		       var result map[string]interface{}
+		       if err := json.Unmarshal(body, &result); err != nil {
+			       return string(body), nil // fallback: return raw response
+		       }
+		       // Try to get 'message' or 'response' field
+		       if msg, ok := result["message"].(string); ok {
+			       return msg, nil
+		       }
+		       if respMsg, ok := result["response"].(string); ok {
+			       return respMsg, nil
+		       }
 		       return string(body), nil // fallback: return raw response
-	       }
-	       // Try to get 'message' or 'response' field
-	       if msg, ok := result["message"].(string); ok {
-		       return msg, nil
-	       }
-	       if resp, ok := result["response"].(string); ok {
-		       return resp, nil
-	       }
-	       return string(body), nil // fallback: return raw response
 }
 
 func generateSessionID() string {
